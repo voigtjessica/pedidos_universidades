@@ -1,7 +1,11 @@
 #Bibliotecas:
 library(dplyr)
 library(readxl)
-library(kableExtra)
+library(ggplot2)
+library(stringr)
+
+
+
 
 #Função:
 como_data <- function(x) {
@@ -139,7 +143,7 @@ uni_total <- base_cgu_completa %>%
          data_da_resposta = como_data(data_da_resposta),
          estado = gsub(".*do|.*da|.*de", "", destino),
          estado = ifelse(grepl("Fluminense",destino), "Rio de Janeiro", estado),
-         estado = ifelse(grepl("UFLA", destino), "Minas gerais", estado),
+         estado = ifelse(grepl("UFLA", destino), "Minas Gerais", estado),
          estado = ifelse(grepl("Janeiro",estado), "Rio de Janeiro", estado),
          estado = ifelse(grepl("UFRGS", destino), "Rio Grande do Sul", estado),
          estado = ifelse(grepl("IFRN", destino), "Rio Grande do Norte", estado),
@@ -178,7 +182,8 @@ uni_total <- base_cgu_completa %>%
          estado = ifelse(grepl("IPEA", destino), "Distrito Federal", estado),
          estado = ifelse(grepl("Brasília", destino), "Distrito Federal", estado),
          estado = ifelse(grepl("INPE-MCT", destino), "São Paulo", estado),
-         estado = ifelse(grepl("IFMS", destino), "Mato Grosso do Sul", estado))
+         estado = ifelse(grepl("IFMS", destino), "Mato Grosso do Sul", estado),
+         estado = trimws(estado, which = c("both")))
 
 
 min(uni_total$data_do_pedido)
@@ -214,7 +219,8 @@ pedidos_uni <- cgu_emp %>%
          resposta =  gsub("MsoNormal&quot", "", resposta),
          resposta =  gsub("&gt", "", resposta),
          resposta = gsub(",,", "", resposta),
-         resposta = gsub("p style=&quot,margin-bottom: 0cm", "", resposta))
+         resposta = gsub("p style=&quot,margin-bottom: 0cm", "", resposta),
+         assunto = word(assunto, 2, -1))
          
 
 ######################################################################################################################
@@ -230,10 +236,14 @@ por_destino <- uni_total %>%
   summarise(total_pedidos = n()) %>%
   arrange(desc(total_pedidos))
   
-por_uf <- uni_total %>%
-  group_by(estado) %>%
-  summarise(total_pedidos = n()) %>%
-  arrange(desc(total_pedidos)) #nada muito interessante aqui
+# Não serivu pra muita coisa então eu vou deixar apagado:
+# por_uf <- uni_total %>%
+#   group_by(estado) %>%
+#   summarise(total_pedidos = n(),
+#             orgaos = n_distinct(destino)) %>%
+#   ungroup() %>%
+#   mutate(media_pedido_orgao = round(total_pedidos/orgaos,0)) %>%
+#   arrange(desc(total_pedidos)) 
 
 
 #Tamanho da amostra
@@ -241,9 +251,52 @@ por_uf <- uni_total %>%
 
 
 ########################################################################################################
-# Analises:
+# Analises das classificações:
 
-pedidos_uni %>%
+#Atendimento:
+atendimento <- pedidos_uni %>%
+  filter(atendimento != "Não Classificado") %>%
+  filter(!is.na(atendimento)) %>%
+  group_by(atendimento) %>%
+  summarise(total_pedidos = n(),
+            perc = paste0(round(total_pedidos/880 *100, 0), " %"))
+
+mycols <- c("#ffa600", "#ff6361", "#bc5090", "#58508d")
+
+ggplot(atendimento, aes(x="", y=total_pedidos, fill=atendimento)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(y = total_pedidos, label = perc), color = "white", 
+            position = position_stack(vjust = 0.6))+
+  scale_fill_manual(values = mycols) +
+  theme_void()
+
+
+# Distribuição de assuntos
+dist_assunto <- pedidos_uni %>%
+  filter(!is.na(assunto),
+         assunto != "Outros") %>%
   group_by(assunto) %>%
-  summarise(total = n()) %>%
-  arrange(desc(total))
+  summarise(total = n(),
+            perc = round((total/880)*100, 2)) %>%
+  arrange(desc(total)) %>%
+  slice(1:10)
+
+dist_assunto$assunto <- factor(dist_assunto$assunto , levels = dist_assunto$assunto [order(dist_assunto$perc)])
+
+
+ggplot(dist_assunto, aes(x=assunto, y=perc)) +
+  geom_segment( aes(x=assunto, xend=assunto, y=0, yend=perc), color="#f5b905") +
+  geom_point( color="#f5b905", size=4) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  xlab("Assuntos") +
+  ylab("% de pedidos")
+
+x <- pedidos_uni %>%
+  filter(assunto == "Servidores")
