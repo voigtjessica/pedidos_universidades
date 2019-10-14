@@ -3,7 +3,7 @@ library(dplyr)
 library(readxl)
 library(ggplot2)
 library(stringr)
-
+library(janitor)
 
 
 
@@ -20,11 +20,38 @@ como_data <- function(x) {
 
 #Preparando os bancos:
 
-#Banco com os pedidos já analisados pelo COLAB:
+#Versão do anexo dos pedidos (que não possuem órgão de destino)
 
-cgu_emp <- read_excel("cgu_emp.xlsx")
+#Autenticação:
+gs_ls() 
 
+#Importando:
+sheet <- gs_title("anexo_relatorio_lai2018")
+banco_pedidos_lai <- gs_read(sheet, ws="PedidosLAI")
+
+banco_pedidos_lai <- banco_pedidos_lai %>%
+  clean_names()
+
+# setwd("C:/Users/coliv/Documents/pedidos_universidades/bancos originais")
+# save(banco_pedidos_lai, file="banco_pedidos_lai.Rdata")
+
+#vou adicionar o órgao de destino da CGU a partir do arquivo de classificação do colab
+
+setwd("C:/Users/coliv/Documents/pedidos_universidades")
 load("base_cgu_completa.Rdata")
+
+protocolos <- base_cgu_completa %>%
+  mutate(protocolo = str_trim(protocolo, side = c("both"))) %>%
+  select(protocolo, destino) 
+
+#Fazendo o arquivo final
+cgu_final <- banco_pedidos_lai %>%
+  filter(orgao == "CGU – Controladoria-Geral da União" ) %>%
+  mutate(protocolo = str_trim(protocolo, side = c("both"))) %>%
+  left_join(protocolos, by = c("protocolo"))
+
+# save(cgu_final, file="cgu_final.Rdata")
+############## Posso começar daqui
 
 # Relação dos institutos e universidades cujos pedidos queremos analisar:
 
@@ -139,9 +166,7 @@ uni <- trimws(uni, which = c("both"))
 #total pedidos para universidades:
 uni_total <- base_cgu_completa %>%
   filter(destino %in% uni) %>%
-  mutate(data_do_pedido = como_data(data_do_pedido),
-         data_da_resposta = como_data(data_da_resposta),
-         estado = gsub(".*do|.*da|.*de", "", destino),
+  mutate(estado = gsub(".*do|.*da|.*de", "", destino),
          estado = ifelse(grepl("Fluminense",destino), "Rio de Janeiro", estado),
          estado = ifelse(grepl("UFLA", destino), "Minas Gerais", estado),
          estado = ifelse(grepl("Janeiro",estado), "Rio de Janeiro", estado),
@@ -185,43 +210,18 @@ uni_total <- base_cgu_completa %>%
          estado = ifelse(grepl("IFMS", destino), "Mato Grosso do Sul", estado),
          estado = trimws(estado, which = c("both")))
 
-
-min(uni_total$data_do_pedido)
-max(uni_total$data_da_resposta)
-  
 nrow(uni_total) #21020
 
-#Banco de análise
-pedidos_uni <- cgu_emp %>%
+#Banco de análise: banco CLASSIFICADO
+pedidos_uni <- cgu_final %>%
   filter(destino %in% uni) %>%
-  mutate(data_do_pedido = como_data(data_do_pedido),
-         data_da_resposta = como_data(data_da_resposta),
-         data_recurso_1 = as.Date(data_recurso_1, format="%Y-%m-%d"),
-         data_recurso_2 = as.Date(data_recurso_2, format="%Y-%m-%d"),
-         data_recurso_3 = as.Date(data_recurso_3, format="%Y-%m-%d"),
-         data_recurso_4 = as.Date(data_recurso_4, format="%Y-%m-%d"),
-         data_resposta_recurso_1 = as.Date(data_resposta_recurso_1, format="%Y-%m-%d"),
-         data_resposta_recurso_2 = as.Date(data_resposta_recurso_2, format="%Y-%m-%d"),
-         data_resposta_recurso_3 = as.Date(data_resposta_recurso_3, format="%Y-%m-%d"),
-         data_resposta_recurso_4 = as.Date(data_resposta_recurso_4, format="%Y-%m-%d")) %>%
-  select(-c(pasta_do_anexo_pedido, anexo_com_extensao_pedido, pasta_do_anexo_resposta, 
-            anexo_com_extensao_resposta, pasta_do_anexo_recurso_1, anexo_com_extensao_recurso_1,
-            pasta_do_anexo_recurso_2, anexo_com_extensao_recurso_2,
-            pasta_do_anexo_recurso_3, anexo_com_extensao_recurso_3,
-            pasta_do_anexo_recurso_4, anexo_com_extensao_recurso_4,
-            pasta_do_anexo_resposta_recurso_1, anexo_com_extensao_resposta_recurso_1,
-            pasta_do_anexo_resposta_recurso_2, anexo_com_extensao_resposta_recurso_2,
-            pasta_do_anexo_resposta_recurso_3, anexo_com_extensao_resposta_recurso_3,
-            pasta_do_anexo_resposta_recurso_4, anexo_com_extensao_resposta_recurso_4, responsavel)) %>%
-  mutate(resposta = gsub("&lt", "", resposta),    #retirando um pouco do HTML
-         resposta =  gsub("p&gt", "", resposta),
-         resposta =  gsub("p class=&quot", "", resposta),
-         resposta =  gsub("MsoNormal&quot", "", resposta),
-         resposta =  gsub("&gt", "", resposta),
-         resposta = gsub(",,", "", resposta),
-         resposta = gsub("p style=&quot,margin-bottom: 0cm", "", resposta),
-         assunto = word(assunto, 2, -1))
-         
+  select(-c(possui_anexo, orgao, orgao_cgu))
+ 
+#Removendo alguns objetos para eu não me confundir
+rm(cgu_final)
+rm(banco_pedidos_lai)
+rm(protocolos)
+rm(sheet)
 
 ######################################################################################################################
 #Panorama Geral:
@@ -247,11 +247,23 @@ por_destino <- uni_total %>%
 
 
 #Tamanho da amostra
-(nrow(pedidos_uni)/nrow(uni_total) ) * 100
+
+so_pedidos <- pedidos_uni %>%
+  filter(tipo_da_interacao == "Pedido") %>%
+  nrow()
+
+(so_pedidos/nrow(uni_total) ) * 100
 
 
 ########################################################################################################
 # Analises das classificações:
+
+#Preciso verificar se o atendido está em qual parte do empilhamento
+# preciso ver se foi atendido em qual instância
+#consertar objeto que vai gerar os gráficos para que ele considere apenas pedidos e o
+# resultado final (atendimento) ou um assunto
+
+
 
 #Atendimento:
 atendimento <- pedidos_uni %>%
@@ -270,6 +282,26 @@ ggplot(atendimento, aes(x="", y=total_pedidos, fill=atendimento)) +
             position = position_stack(vjust = 0.6))+
   scale_fill_manual(values = mycols) +
   theme_void()
+
+#Distribuição do tema do pedido
+dist_tema <- pedidos_uni %>%
+  group_by(area_tematica) %>%
+  summarise(total = n(),
+            perc = total / ) %>%
+  arrange(desc(total))
+
+ggplot(dist_tema, aes(x=area_tematica, y=perc)) +
+  geom_segment( aes(x=assunto, xend=assunto, y=0, yend=perc), color="#f5b905") +
+  geom_point( color="#f5b905", size=4) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  xlab("Assuntos", si) +
+  ylab("% de pedidos")
 
 
 # Distribuição de assuntos
@@ -295,7 +327,7 @@ ggplot(dist_assunto, aes(x=assunto, y=perc)) +
     panel.border = element_blank(),
     axis.ticks.x = element_blank()
   ) +
-  xlab("Assuntos") +
+  xlab("Assuntos", si) +
   ylab("% de pedidos")
 
 x <- pedidos_uni %>%
