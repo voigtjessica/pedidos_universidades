@@ -4,8 +4,13 @@ library(readxl)
 library(ggplot2)
 library(stringr)
 library(janitor)
+library(xlsx)
+library(googledrive)
+library(googlesheets)
+library(stringi)
 
 
+drive_find(n_max=10)
 
 #Função:
 como_data <- function(x) {
@@ -25,16 +30,16 @@ como_data <- function(x) {
 #Autenticação:
 gs_ls() 
 
-#Importando:
+#Importando todos os pedidos ANALISADOS:
 sheet <- gs_title("anexo_relatorio_lai2018")
 banco_pedidos_lai <- gs_read(sheet, ws="PedidosLAI")
 
 banco_pedidos_lai <- banco_pedidos_lai %>%
   clean_names()
 
-# setwd("C:/Users/coliv/Documents/pedidos_universidades/bancos originais")
+setwd("C:/Users/coliv/Documents/pedidos_universidades/bancos originais")
 # save(banco_pedidos_lai, file="banco_pedidos_lai.Rdata")
-
+# load("banco_pedidos_lai.Rdata")
 #vou adicionar o órgao de destino da CGU a partir do arquivo de classificação do colab
 
 setwd("C:/Users/coliv/Documents/pedidos_universidades")
@@ -51,7 +56,11 @@ cgu_final <- banco_pedidos_lai %>%
   left_join(protocolos, by = c("protocolo"))
 
 # save(cgu_final, file="cgu_final.Rdata")
-############## Posso começar daqui
+# ############# Posso começar daqui
+
+setwd("C:/Users/coliv/Documents/pedidos_universidades")
+load("base_cgu_completa.Rdata")
+load("cgu_final.Rdata")
 
 # Relação dos institutos e universidades cujos pedidos queremos analisar:
 
@@ -213,19 +222,20 @@ uni_total <- base_cgu_completa %>%
 nrow(uni_total) #21020
 
 #Banco de análise: banco CLASSIFICADO
-pedidos_uni <- cgu_final %>%
+banco_uni <- cgu_final %>%
   filter(destino %in% uni) %>%
   select(-c(possui_anexo, orgao, orgao_cgu))
  
-#Removendo alguns objetos para eu não me confundir
-rm(cgu_final)
-rm(banco_pedidos_lai)
-rm(protocolos)
-rm(sheet)
+# #Removendo alguns objetos para eu não me confundir
+# rm(cgu_final)
+# rm(banco_pedidos_lai)
+# rm(protocolos)
+# rm(sheet)
 
 ######################################################################################################################
 #Panorama Geral:
 
+  
 
 #Percentual dos pedidos feitos à universidades em comparação a CGU
 nrow(uni_total) / nrow(base_cgu_completa)   #23% de todos os pedidos feitos à CGU no período.
@@ -236,19 +246,11 @@ por_destino <- uni_total %>%
   summarise(total_pedidos = n()) %>%
   arrange(desc(total_pedidos))
   
-# Não serivu pra muita coisa então eu vou deixar apagado:
-# por_uf <- uni_total %>%
-#   group_by(estado) %>%
-#   summarise(total_pedidos = n(),
-#             orgaos = n_distinct(destino)) %>%
-#   ungroup() %>%
-#   mutate(media_pedido_orgao = round(total_pedidos/orgaos,0)) %>%
-#   arrange(desc(total_pedidos)) 
-
+# Distribuição por UF não mostrou nada interessante - apaguei
 
 #Tamanho da amostra
 
-so_pedidos <- pedidos_uni %>%
+so_pedidos <- banco_uni %>%
   filter(tipo_da_interacao == "Pedido") %>%
   nrow()
 
@@ -263,10 +265,11 @@ so_pedidos <- pedidos_uni %>%
 #consertar objeto que vai gerar os gráficos para que ele considere apenas pedidos e o
 # resultado final (atendimento) ou um assunto
 
-
+banco_so_pedidos <- banco_uni %>%
+  filter(tipo_da_interacao == "Pedido") 
 
 #Atendimento:
-atendimento <- pedidos_uni %>%
+atendimento <- banco_so_pedidos %>%
   filter(atendimento != "Não Classificado") %>%
   filter(!is.na(atendimento)) %>%
   group_by(atendimento) %>%
@@ -284,51 +287,278 @@ ggplot(atendimento, aes(x="", y=total_pedidos, fill=atendimento)) +
   theme_void()
 
 #Distribuição do tema do pedido
-dist_tema <- pedidos_uni %>%
+dist_tema <- banco_so_pedidos %>%
   group_by(area_tematica) %>%
   summarise(total = n(),
-            perc = total / ) %>%
+            perc = total / 706) %>%
+  ungroup() %>%
+  mutate(perc2 = paste0(round(perc*100, 2), "%")) %>%
   arrange(desc(total))
 
-ggplot(dist_tema, aes(x=area_tematica, y=perc)) +
-  geom_segment( aes(x=assunto, xend=assunto, y=0, yend=perc), color="#f5b905") +
-  geom_point( color="#f5b905", size=4) +
-  theme_light() +
+
+dist_tema$area_tematica <- factor(dist_tema$area_tematica , 
+                                  levels = dist_tema$area_tematica[order(dist_tema$perc)])
+
+ggplot(dist_tema, aes(x=area_tematica, y=perc, label=perc2)) +
+  geom_segment( aes(x=area_tematica, xend=area_tematica, y=0, yend=perc),
+                color="grey") +
+  geom_point( color="#adadad", size=9, alpha= 0.9) +
+  theme_light(base_size = 14) +
   coord_flip() +
   theme(
-    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_blank(),
     panel.border = element_blank(),
-    axis.ticks.x = element_blank()
-  ) +
-  xlab("Assuntos", si) +
-  ylab("% de pedidos")
+    axis.ticks.y = element_blank()
+  ) + scale_y_continuous(name ="", labels = scales::percent)  +
+  scale_x_discrete(name ="") +
+  geom_text(color = "black", size = 3)
 
-
+ 
 # Distribuição de assuntos
-dist_assunto <- pedidos_uni %>%
-  filter(!is.na(assunto),
-         assunto != "Outros") %>%
-  group_by(assunto) %>%
+
+# Versão Tabela1 que depois foi formatada
+dist_assunto2 <- banco_so_pedidos %>%
+  group_by(area_tematica, assunto) %>%
+  summarise(total_assunto = n(),
+            perc_assunto_total = round((total_assunto/706)*100, 2)) %>%
+   arrange(desc(total_assunto))
+
+write.xlsx(as.data.frame(dist_assunto2),
+           file="dist_assunto2.xlsx", sheetName="assuntos",
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=FALSE)
+
+
+
+write.xlsx(as.data.frame(banco_uni), 
+           file="banco_pedidos_universidades.xlsx", sheetName="Página 1",
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=FALSE)
+
+drive_upload(
+  "banco_pedidos_universidades.xlsx",
+  path="~/TB/2019/Encontro de E-sic Min Infraestrutura/",
+  name = "banco_pedidos_universidades",
+  type = "spreadsheet")
+
+#Distribuição dos temas
+dist_tema <- banco_so_pedidos %>%
+  group_by(area_tematica) %>%
   summarise(total = n(),
-            perc = round((total/880)*100, 2)) %>%
-  arrange(desc(total)) %>%
-  slice(1:10)
-
-dist_assunto$assunto <- factor(dist_assunto$assunto , levels = dist_assunto$assunto [order(dist_assunto$perc)])
+            perc = paste0(round(total/706, 2)*100, " %"))
 
 
-ggplot(dist_assunto, aes(x=assunto, y=perc)) +
-  geom_segment( aes(x=assunto, xend=assunto, y=0, yend=perc), color="#f5b905") +
-  geom_point( color="#f5b905", size=4) +
-  theme_light() +
-  coord_flip() +
-  theme(
-    panel.grid.major.x = element_blank(),
-    panel.border = element_blank(),
-    axis.ticks.x = element_blank()
-  ) +
-  xlab("Assuntos", si) +
-  ylab("% de pedidos")
+#Distribuição por assunto dentro das universidades e institutos:
 
-x <- pedidos_uni %>%
-  filter(assunto == "Servidores")
+uni_dist_assunto <- banco_so_pedidos %>%
+  group_by(destino, area_tematica, assunto) %>%
+  summarise(total = n()) %>%
+  ungroup() %>%
+  group_by(destino) %>%
+  mutate(total_universidade = sum(total),
+         perc_universidade = round(total/total_universidade,2)*100) %>%
+  ungroup() %>%
+  arrange(desc(total_universidade), desc(total)) %>%
+  select(-c(total))
+
+
+#Quantos não foram atendidos?
+banco_uni %>%
+  filter(tipo_da_interacao == "Pedido",
+         atendimento != "Não Classificado") %>%
+  group_by(atendimento) %>%
+  summarise(total = n(),
+            perc = total/706)
+
+#Ver quais assuntos tem maior taxa de não atendimento:
+banco_uni %>%
+  filter(tipo_da_interacao == "Pedido",
+         atendimento == "Não Atendido") %>%
+  group_by(area_tematica, assunto) %>%
+  summarise(total = n())
+
+#montando um banco de não atendidos:
+nao_atendidos <- banco_so_pedidos %>%
+  filter(atendimento == "Não Atendido") 
+
+#Achando o banco de amostra no drive
+amostra_sheet <- gs_title("df_amostra")
+#Adicionando linhas na planilhona
+gs_add_row(amostra_sheet, ws = "não atendidos", input = nao_atendidos, verbose = TRUE)
+
+
+#Não atendidos por área temática
+
+na_area_tematica <- nao_atendidos %>%
+  group_by(area_tematica) %>%
+  summarise(total_nao_atendidos = n()) %>%
+  left_join(dist_tema, by=c("area_tematica")) %>%
+  select(-c(perc)) %>%
+  mutate(perc_nao_atendidos = total_nao_atendidos/total) %>%
+  arrange(desc(perc_nao_atendidos)) %>%
+  mutate(perc_nao_atendidos2 = paste0( round(perc_nao_atendidos,2)*100, "%")) %>%
+  select(-c(total_nao_atendidos, total, perc_nao_atendidos))
+
+na_assuntos <- nao_atendidos %>%
+  group_by(area_tematica, assunto) %>%
+  summarise(total_na_assunto = n()) %>%
+  left_join(dist_assunto2) %>%
+  mutate(percentual_nao_atendimento = total_na_assunto/total_assunto) %>%
+  select(area_tematica, assunto, percentual_nao_atendimento) %>%
+  arrange(desc(percentual_nao_atendimento)) %>%
+  mutate(percentual_nao_atendimento = paste0(round(percentual_nao_atendimento,2)*100, "%"))
+
+
+write.xlsx(as.data.frame(na_area_tematica), 
+           file="na_area_tematica.xlsx", sheetName="Página 1",
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=FALSE)
+
+write.xlsx(as.data.frame(na_assuntos), 
+           file="na_assuntos.xlsx", sheetName="Página 1",
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=FALSE)
+
+
+
+#######################################################################################
+###### Agora é só validação das categorias
+
+#1. tamanho da amostra:
+
+amostra <- banco_so_pedidos %>%
+  group_by(area_tematica, assunto) %>%
+  summarise(total = n(),
+            amostra = round(0.1* total, 0))
+
+df_amostra <- data.frame()
+
+for(i in 1:nrow(amostra)){
+  
+  larea_tematica <- amostra[i,1]
+  lassunto <- amostra[i,2]
+  n <- as.numeric(amostra[i,4])
+  
+  a <- banco_so_pedidos %>%
+    filter(area_tematica %in% larea_tematica) %>%
+    filter(assunto %in% lassunto)
+  
+  b <- sample_n(a, size = n)
+  
+  df_amostra <- rbind(df_amostra, b)
+}
+
+for(i in 1:nrow(amostra)){
+  
+  larea_tematica <- amostra[i,1]
+  lassunto <- amostra[i,2]
+  n <- as.numeric(amostra[i,4])
+  
+  if(n == 0){
+    c <- banco_so_pedidos %>%
+      filter(area_tematica %in% larea_tematica) %>%
+      filter(assunto %in% lassunto)
+    
+    df_amostra <- rbind(df_amostra, c)
+  }}
+
+write.xlsx(as.data.frame(df_amostra), 
+           file="df_amostra.xlsx", sheetName="Página 1",
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=FALSE)
+
+drive_upload(
+  "df_amostra.xlsx",
+  path="~/TB/2019/Encontro de E-sic Min Infraestrutura/",
+  name = "df_amostra",
+  type = "spreadsheet")
+
+# Amostra complementar:
+
+df_amostra_complementar <- data.frame()
+
+for(i in 1:nrow(amostra)){
+  
+  larea_tematica <- amostra[i,1]
+  lassunto <- amostra[i,2]
+  n <- as.numeric(amostra[i,3])
+  
+  if(n < 18 & n > 5){
+    d <- banco_so_pedidos %>%
+      filter(area_tematica %in% larea_tematica) %>%
+      filter(assunto %in% lassunto) %>%
+      mutate(Obs = NA)
+    
+    df_amostra_complementar <- rbind(df_amostra_complementar, d)
+  }}
+
+#Achando o banco de amostra no drive
+amostra_sheet <- gs_title("df_amostra")
+#Adicionando linhas na planilhona
+gs_add_row(amostra_sheet, ws = "Página 1", input = df_amostra_complementar, verbose = TRUE)
+ 
+
+### Contando quantas vezes as palavras ocorrem nos pedidos (contagem simples)
+
+cont_pedidos <- banco_so_pedidos$conteudo
+
+#retirando acentos
+cont_pedidos <- stri_trans_general(cont_pedidos, "Latin-ASCII")
+cont_pedidos <- tolower(cont_pedidos)
+cont_pedidos <- gsub("\\.", " ", cont_pedidos)
+cont_pedidos <- gsub("\\/", " ", cont_pedidos)
+cont_pedidos <- gsub("\\(", " ", cont_pedidos)
+cont_pedidos <- gsub("\\)", " ", cont_pedidos)
+cont_pedidos <- gsub(",", " ", cont_pedidos)
+
+palavras <- str_split(cont_pedidos, " ")
+palavras <- unlist(palavras, use.names=FALSE)
+
+palavras <- data.frame(expressoes = palavras)
+
+palavras <- palavras %>%
+  group_by(expressoes) %>%
+  summarise(total = n())
+
+expressoes <- c("auditoria", "campus", "cargo", "vagas", "vaga", "servidores", "cargos", 
+                "codigo", "dados", "aproveitamento", "mestrado", "professor", 
+                "relatorios", "alunos", "graduacao", "pos-graduacao", "despesasdiarias", 
+                "pagamento", "cota")
+
+df <- banco_so_pedidos %>%
+  select(conteudo) %>%
+  mutate(conteudo = stri_trans_general(conteudo, "Latin-ASCII"),
+         conteudo  =  tolower(conteudo), 
+         conteudo  =  gsub("\\.", " ", conteudo),
+         conteudo  =  gsub("\\/", " ", conteudo),
+         conteudo  =  gsub("\\(", " ", conteudo),
+         conteudo  =  gsub("\\)", " ", conteudo),
+         conteudo  =  gsub(",", " ", conteudo),
+         auditoria = ifelse(grepl("auditoria", conteudo),1, 0),
+         campus = ifelse(grepl("campus", conteudo),1, 0),
+         cargo = ifelse(grepl("cargo", conteudo),1,ifelse(grepl("cargos", conteudo), 1, 0)),
+         vagas = ifelse(grepl("vagas", conteudo),1, ifelse(grepl("vaga", conteudo),1,0)),
+         servidores = ifelse(grepl("servidores", conteudo),1, 0),
+         codigo = ifelse(grepl("codigo", conteudo),1, 0),
+         dados = ifelse(grepl("dados", conteudo),1, 0),
+         aproveitamento = ifelse(grepl("aproveitamento", conteudo),1, 0),
+         mestrado = ifelse(grepl("mestrado", conteudo),1, 0),
+         professor = ifelse(grepl("professor", conteudo),1, 0),
+         relatorios = ifelse(grepl("relatorios", conteudo),1, 0),
+         alunos = ifelse(grepl("alunos", conteudo),1, 0),
+         graduacao = ifelse(grepl("graduacao", conteudo),1, 0),
+         pos_graduacao = ifelse(grepl("pos-graduacao", conteudo),1, 0),
+         despesasdiarias = ifelse(grepl("despesasdiarias", conteudo), 1, 0),
+         pagamento = ifelse(grepl("pagamento", conteudo), 1, 0),
+         cota = ifelse(grepl("cota", conteudo), 1, ifelse(grepl("cotas", conteudo),1,0))) %>%
+  adorn_totals("row") %>%
+  filter(conteudo == "Total")
+
+cont <- colnames(df)
+
+df[2,] <- cont
+
+df <- as.data.frame(t(df), row.names = FALSE)
+  
+colnames(df) <- c("Total", "Conteudo")
+
+df1 <- df %>%
+  filter(Total != "Total") %>%
+  select(Conteudo, Total) 
+
+###################################
